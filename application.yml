@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/vibecircle
+    username: vibe
+    password: vibe_dev
+  jpa:
+    hibernate:
+      ddl-auto: validate   # Flyway owns the schema, Hibernate only checks it
+  flyway:
+    enabled: true
