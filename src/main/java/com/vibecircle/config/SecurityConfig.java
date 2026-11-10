@@ -41,8 +41,9 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)           // stateless API, bearer tokens
             .cors(Customizer.withDefaults())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(a -> a
+                        .authorizeHttpRequests(a -> a
                 .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/ws/**", "/dev/**").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(converter)));
         return http.build();

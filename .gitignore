@@ -31,3 +31,13 @@ build/
 
 ### VS Code ###
 .vscode/
+# Uploaded media
+/uploads/
+
+# Build files
+/target/
+
+# Secrets
+.env
+application-local.properties
+application-local.yml

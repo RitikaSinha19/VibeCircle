@@ -71,4 +71,31 @@ public class AccessPolicyService {
                 .optional()
                 .orElse(ProfileAccess.NONE);
     }
+    public boolean canViewPost(Long viewerId, Long postId) {
+        return jdbc.sql("""
+                        SELECT p.author_id, p.audience,
+                               COALESCE(pr.profile_visibility, 'PUBLIC') AS visibility,
+                               EXISTS (SELECT 1 FROM blocks b
+                                       WHERE (b.blocker_id = :viewer AND b.blocked_id = p.author_id)
+                                          OR (b.blocker_id = p.author_id AND b.blocked_id = :viewer)) AS blocked,
+                               EXISTS (SELECT 1 FROM friendships f
+                                       WHERE f.user_low_id = LEAST(:viewer, p.author_id)
+                                         AND f.user_high_id = GREATEST(:viewer, p.author_id)) AS friends
+                        FROM posts p
+                        JOIN users u ON u.id = p.author_id
+                        LEFT JOIN user_profiles pr ON pr.user_id = p.author_id
+                        WHERE p.id = :post AND p.deleted_at IS NULL
+                          AND u.status = 'ACTIVE' AND u.deleted_at IS NULL
+                        """)
+                .param("viewer", viewerId)
+                .param("post", postId)
+                .query((rs, i) -> {
+                    if (viewerId.equals(rs.getLong("author_id"))) return true;
+                    if (rs.getBoolean("blocked")) return false;
+                    if (rs.getBoolean("friends")) return true;
+                    return "PUBLIC".equals(rs.getString("audience")) && "PUBLIC".equals(rs.getString("visibility"));
+                })
+                .optional()
+                .orElse(false);
+    }
 }
