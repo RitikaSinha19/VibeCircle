@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VibeCircle - live chat tester (DEV ONLY)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 1.5rem auto; padding: 0 1rem; }
+    input, button { padding: .4rem .6rem; margin: .15rem .3rem .15rem 0; }
+    fieldset { margin: .6rem 0; border: 1px solid #ccc; border-radius: 6px; }
+    #log { background: #111; color: #9f9; padding: 1rem; height: 320px; overflow: auto;
+           font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h2>Live chat (dev tool)</h2>
+  <p>Open this page in two windows (one normal, one private) and log in as two users who are friends,
+     e.g. <b>test_a</b> and <b>test_i</b>.</p>
+
+  <fieldset><legend>1. Connect</legend>
+    <input id="user" value="test_a" placeholder="username">
+    <input id="pass" type="password" value="StrongPass123">
+    <button id="connect">Connect</button> <button id="disconnect">Disconnect</button>
+  </fieldset>
+
+  <fieldset><legend>2. Open a conversation</legend>
+    Friend's user id: <input id="friendId" size="4" value="10">
+    <button id="open">Open chat</button>
+    Conversation id: <input id="convId" size="4">
+  </fieldset>
+
+  <fieldset><legend>3. Chat</legend>
+    <input id="text" size="36" placeholder="type a message">
+    <button id="send">Send</button>
+    <button id="typingOn">Typing...</button>
+    <button id="typingOff">Stop typing</button>
+    <button id="markRead">Mark read</button>
+  </fieldset>
+  <div id="log"></div>
+
+<script>
+  const logBox = document.getElementById('log');
+  const $ = id => document.getElementById(id);
+  let client = null, token = null;
+
+  function log(text) {
+    const line = document.createElement('div');
+    line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+  const authHeaders = () => ({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' });
+
+  $('connect').addEventListener('click', async () => {
+    if (client) { client.deactivate(); }
+    const res = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: $('user').value, password: $('pass').value })
+    });
+    if (!res.ok) { log('Login failed: HTTP ' + res.status); return; }
+    const data = await res.json();
+    token = data.accessToken;
+    log('Logged in as ' + data.user.username + ' (id ' + data.user.id + ')');
+
+    client = new StompJs.Client({
+      brokerURL: 'ws://' + location.host + '/ws',
+      connectHeaders: { Authorization: 'Bearer ' + token },
+      reconnectDelay: 0
+    });
+    client.onConnect = () => {
+      log('WebSocket connected');
+      client.subscribe('/user/queue/messages', m => log('MESSAGE  ' + m.body));
+      client.subscribe('/user/queue/typing',   m => log('TYPING   ' + m.body));
+      client.subscribe('/user/queue/presence', m => log('PRESENCE ' + m.body));
+      client.subscribe('/user/queue/errors',   m => log('ERROR    ' + m.body));
+      client.subscribe('/user/queue/notifications', m => log('NOTIFY   ' + m.body));
+    };
+    client.onStompError = f => log('STOMP error: ' + (f.headers['message'] || f.body));
+    client.onWebSocketClose = () => log('WebSocket closed');
+    client.activate();
+  });
+
+  $('disconnect').addEventListener('click', () => { if (client) { client.deactivate(); client = null; } });
+
+  $('open').addEventListener('click', async () => {
+    const res = await fetch('/api/chat/conversations', {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ userId: Number($('friendId').value) })
+    });
+    const body = await res.json();
+    if (!res.ok) { log('Open failed: ' + JSON.stringify(body)); return; }
+    $('convId').value = body.id;
+    log('Conversation ' + body.id + ' with ' + body.otherUser.username + ' (unread ' + body.unreadCount + ')');
+  });
+
+  const conv = () => Number($('convId').value);
+  const publish = (dest, payload) => {
+    if (!client || !client.connected) { log('Not connected'); return; }
+    client.publish({ destination: dest, body: JSON.stringify(payload) });
+  };
+
+  $('send').addEventListener('click', () => {
+    publish('/app/chat/send', { conversationId: conv(), text: $('text').value, clientMsgId: crypto.randomUUID() });
+    $('text').value = '';
+  });
+  $('typingOn').addEventListener('click',  () => publish('/app/chat/typing', { conversationId: conv(), typing: true }));
+  $('typingOff').addEventListener('click', () => publish('/app/chat/typing', { conversationId: conv(), typing: false }));
+  $('markRead').addEventListener('click',  () => publish('/app/chat/read',   { conversationId: conv(), upToMessageId: null }));
+</script>
+</body>
+</html>

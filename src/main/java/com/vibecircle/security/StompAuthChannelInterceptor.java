@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
  *  CONNECT   : must carry "Authorization: Bearer <access token>". The principal name becomes the user id.
  *  SUBSCRIBE : only /user/queue/** is allowed. Spring resolves "/user/..." per session, so a client can
  *              never listen on another user's queue, and cannot subscribe to broadcast destinations.
- *  SEND      : rejected for now (no client-to-server messages exist yet; chat will allow /app/**).
+ *  SEND      : only to /app/chat/** (messages, typing, read receipts) and /app/call/** (call signalling) by authenticated users.
  */
 @Component
 public class StompAuthChannelInterceptor implements ChannelInterceptor {
@@ -48,7 +48,12 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                 throw new MessageDeliveryException("Subscription not allowed");
             }
         } else if (StompCommand.SEND.equals(command)) {
-            throw new MessageDeliveryException("Sending is not allowed");
+            requireUser(accessor);
+            String destination = accessor.getDestination();
+            if (destination == null
+                    || !(destination.startsWith("/app/chat/") || destination.startsWith("/app/call/"))) {
+                throw new MessageDeliveryException("Sending is not allowed");
+            }
         }
         return message;
     }

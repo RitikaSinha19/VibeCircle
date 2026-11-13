@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VibeCircle - live call tester (DEV ONLY)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; }
+    input, button, select { padding: .4rem .6rem; margin: .15rem .3rem .15rem 0; }
+    fieldset { margin: .6rem 0; border: 1px solid #ccc; border-radius: 6px; }
+    video { width: 49%; background: #222; border-radius: 6px; min-height: 180px; }
+    #log { background: #111; color: #9f9; padding: 1rem; height: 220px; overflow: auto;
+           font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h2>Voice / video call (dev tool)</h2>
+  <p>Open this page in two windows and log in as two friends, e.g. <b>test_a</b> (id 2) and <b>test_i</b> (id 10).
+     Two windows in the <i>same</i> browser can usually share one camera; if the second one fails, use <b>Voice</b> calls
+     or a second browser.</p>
+
+  <fieldset><legend>1. Connect</legend>
+    <input id="user" value="test_a"> <input id="pass" type="password" value="StrongPass123">
+    <button id="connect">Connect</button> <button id="disconnect">Disconnect</button>
+  </fieldset>
+
+  <fieldset><legend>2. Call</legend>
+    Friend's user id: <input id="friendId" size="4" value="10">
+    <button id="callVoice">Voice call</button>
+    <button id="callVideo">Video call</button>
+    <button id="accept" disabled>Accept</button>
+    <button id="reject" disabled>Reject</button>
+    <button id="hangup" disabled>Hang up / Cancel</button>
+  </fieldset>
+
+  <fieldset><legend>3. During the call</legend>
+    <button id="mute" disabled>Mute / unmute microphone</button>
+    <button id="camera" disabled>Camera on / off</button>
+    <span id="state">idle</span>
+  </fieldset>
+
+  <video id="local" autoplay playsinline muted></video><video id="remote" autoplay playsinline></video>
+  <div id="log"></div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  function log(text) {
+    const line = document.createElement('div');
+    line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+    $('log').appendChild(line); $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  let client = null, token = null;
+  let callId = null, callType = null, isCaller = false, status = 'idle';
+  let pc = null, localStream = null, remoteSet = false, pendingIce = [];
+
+  async function api(method, path, body) {
+    const res = await fetch(path, { method, headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                                    body: body ? JSON.stringify(body) : undefined });
+    let data = null; try { data = await res.json(); } catch (e) { /* empty body */ }
+    return { ok: res.ok, status: res.status, data };
+  }
+  function setState(s) {
+    status = s; $('state').textContent = s;
+    const ringingIn = s === 'RINGING' && !isCaller;
+    $('accept').disabled = !ringingIn; $('reject').disabled = !ringingIn;
+    $('hangup').disabled = !(s === 'RINGING' || s === 'ACTIVE');
+    $('mute').disabled = s !== 'ACTIVE'; $('camera').disabled = s !== 'ACTIVE';
+    $('callVoice').disabled = $('callVideo').disabled = (s === 'RINGING' || s === 'ACTIVE');
+  }
+  const send = (type, data) => client.publish({ destination: '/app/call/signal',
+                                                body: JSON.stringify({ callId, type, data }) });
+
+  // ---------------------------------------------------------------- connect
+  $('connect').addEventListener('click', async () => {
+    if (client) client.deactivate();
+    const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: $('user').value, password: $('pass').value }) });
+    if (!res.ok) { log('Login failed: HTTP ' + res.status); return; }
+    const data = await res.json();
+    token = data.accessToken;
+    log('Logged in as ' + data.user.username + ' (id ' + data.user.id + ')');
+    client = new StompJs.Client({ brokerURL: 'ws://' + location.host + '/ws',
+      connectHeaders: { Authorization: 'Bearer ' + token }, reconnectDelay: 0 });
+    client.onConnect = () => {
+      log('WebSocket connected');
+      client.subscribe('/user/queue/call', m => onCallEvent(JSON.parse(m.body)));
+      client.subscribe('/user/queue/errors', m => log('ERROR ' + m.body));
+    };
+    client.onStompError = f => log('STOMP error: ' + (f.headers['message'] || f.body));
+    client.onWebSocketClose = () => log('WebSocket closed');
+    client.activate();
+  });
+  $('disconnect').addEventListener('click', () => { cleanup(); if (client) { client.deactivate(); client = null; } });
+
+  // ------------------------------------------------------------ call events
+  function onCallEvent(ev) {
+    if (ev.type === 'SIGNAL') { handleSignal(ev).catch(e => log('Signal error: ' + e)); return; }
+    log('CALL ' + ev.type + ' #' + ev.callId);
+    if (ev.type === 'INCOMING') {
+      callId = ev.callId; callType = ev.call.type; isCaller = false;
+      log('Incoming ' + callType + ' call from ' + ev.call.caller.username);
+      setState('RINGING');
+    } else if (ev.type === 'ACCEPTED') {
+      setState('ACTIVE');
+      if (isCaller) startOffer().catch(e => log('Offer error: ' + e));
+    } else {   // REJECTED, CANCELLED, MISSED, ENDED, FAILED
+      cleanup();
+    }
+  }
+
+  // ----------------------------------------------------------------- WebRTC
+  async function setupPeer() {
+    const ice = await api('GET', '/api/calls/ice-servers');
+    if (!ice.ok) throw new Error('ice-servers: HTTP ' + ice.status);
+    const iceServers = ice.data.iceServers.map(s => {
+      const o = { urls: s.urls }; if (s.username) { o.username = s.username; o.credential = s.credential; } return o; });
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'VIDEO' });
+    $('local').srcObject = localStream;
+    pc = new RTCPeerConnection({ iceServers });
+    remoteSet = false; pendingIce = [];
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    pc.onicecandidate = e => { if (e.candidate) send('ICE_CANDIDATE', JSON.stringify(e.candidate)); };
+    pc.ontrack = e => { $('remote').srcObject = e.streams[0]; };
+    pc.onconnectionstatechange = () => {
+      log('Peer connection: ' + pc.connectionState);
+      if (pc.connectionState === 'failed') api('POST', '/api/calls/' + callId + '/failed');
+    };
+  }
+  async function startOffer() {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    send('OFFER', JSON.stringify(offer));
+  }
+  async function flushIce() { remoteSet = true; for (const c of pendingIce) await pc.addIceCandidate(c); pendingIce = []; }
+  async function handleSignal(ev) {
+    if (!pc) { log('Signal before the peer was ready: ' + ev.signalType); return; }
+    const payload = JSON.parse(ev.data);
+    if (ev.signalType === 'OFFER') {
+      await pc.setRemoteDescription(payload); await flushIce();
+      const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+      send('ANSWER', JSON.stringify(answer));
+    } else if (ev.signalType === 'ANSWER') {
+      await pc.setRemoteDescription(payload); await flushIce();
+    } else if (ev.signalType === 'ICE_CANDIDATE') {
+      if (remoteSet) await pc.addIceCandidate(payload); else pendingIce.push(payload);
+    } else if (ev.signalType === 'MEDIA_STATE') {
+      log('Peer media: microphone ' + (payload.audio ? 'on' : 'MUTED') + ', camera ' + (payload.video ? 'on' : 'off'));
+    }
+  }
+  function cleanup() {
+    if (pc) { pc.close(); pc = null; }
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    $('local').srcObject = null; $('remote').srcObject = null;
+    callId = null; isCaller = false; remoteSet = false; pendingIce = [];
+    setState('idle');
+  }
+
+  // ---------------------------------------------------------------- buttons
+  async function placeCall(type) {
+    callType = type; isCaller = true;
+    const r = await api('POST', '/api/calls', { calleeId: Number($('friendId').value), type });
+    if (!r.ok) { log('Could not call: ' + JSON.stringify(r.data)); isCaller = false; return; }
+    callId = r.data.id;
+    if (r.data.status === 'MISSED') { log('User is unavailable (recorded as a missed call)'); callId = null; isCaller = false; return; }
+    setState('RINGING');
+    try { await setupPeer(); } catch (e) { log('Media error: ' + e); api('POST', '/api/calls/' + callId + '/cancel'); cleanup(); }
+  }
+  $('callVoice').addEventListener('click', () => placeCall('VOICE'));
+  $('callVideo').addEventListener('click', () => placeCall('VIDEO'));
+
+  $('accept').addEventListener('click', async () => {
+    try { await setupPeer(); } catch (e) { log('Media error: ' + e); api('POST', '/api/calls/' + callId + '/reject'); cleanup(); return; }
+    const r = await api('POST', '/api/calls/' + callId + '/accept');
+    if (!r.ok) { log('Accept failed: ' + JSON.stringify(r.data)); cleanup(); }
+  });
+  $('reject').addEventListener('click', () => api('POST', '/api/calls/' + callId + '/reject'));
+  $('hangup').addEventListener('click', () => {
+    const action = status === 'ACTIVE' ? 'end' : (isCaller ? 'cancel' : 'reject');
+    api('POST', '/api/calls/' + callId + '/' + action);
+  });
+
+  function mediaState() {
+    return { audio: localStream.getAudioTracks().every(t => t.enabled),
+             video: localStream.getVideoTracks().length === 0 ? false : localStream.getVideoTracks().every(t => t.enabled) };
+  }
+  $('mute').addEventListener('click', () => {
+    localStream.getAudioTracks().forEach(t => t.enabled = !t.enabled);
+    send('MEDIA_STATE', JSON.stringify(mediaState()));
+  });
+  $('camera').addEventListener('click', () => {
+    localStream.getVideoTracks().forEach(t => t.enabled = !t.enabled);
+    send('MEDIA_STATE', JSON.stringify(mediaState()));
+  });
+  setState('idle');
+</script>
+</body>
+</html>
