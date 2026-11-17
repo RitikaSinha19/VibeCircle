@@ -1,0 +1,45 @@
+
+@import "tailwindcss";
+@import "./styles/theme.css";
+:root {
+  font-family: Inter, sans-serif;
+  color: #ffffff;
+  background: #0B1026;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #0B1026;
+}
+
+@import "./styles/theme.css";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: Inter, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+button, input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+@import "./styles/theme.css";

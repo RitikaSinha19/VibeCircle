@@ -1,0 +1,49 @@
+
+:root {
+  /* Backgrounds */
+  --bg-primary: #D3BBA3;
+  --bg-secondary: #F5EBDD;
+  --bg-sidebar: #0F1B36;
+  --bg-card: #F5EBDD;
+  --bg-hover: #E9D8C5;
+
+  /* Brand colors */
+  --color-navy: #0F1B36;
+  --color-terracotta: #D87355;
+  --color-peach: #E9A58D;
+  --color-beige: #D3BBA3;
+
+  /* Text */
+  --text-primary: #0F1B36;
+  --text-secondary: #927B68;
+  --text-light: #FFFFFF;
+
+  /* Effects */
+  --gradient-main: linear-gradient(
+    135deg,
+    #0F1B36,
+    #D87355
+  );
+}
+
+:root {
+  --bg-primary: #D3BBA3;
+  --bg-secondary: #F5EBDD;
+  --bg-sidebar: #0F1B36;
+  --bg-card: #F5EBDD;
+  --bg-hover: #E9D8C5;
+
+  --color-navy: #0F1B36;
+  --color-terracotta: #D87355;
+  --color-peach: #E9A58D;
+  --color-beige: #D3BBA3;
+
+  --text-primary: #0F1B36;
+  --text-secondary: #927B68;
+  --text-light: #FFFFFF;
+
+  --radius-card: 18px;
+  --radius-button: 12px;
+
+  --shadow-card: 0 8px 24px rgba(15, 27, 54, 0.08);
+}
