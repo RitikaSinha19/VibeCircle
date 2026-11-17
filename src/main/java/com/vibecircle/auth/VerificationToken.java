@@ -52,4 +52,18 @@ public class VerificationToken {
     public Instant getExpiresAt() { return expiresAt; }
     public Instant getUsedAt() { return usedAt; }
     public void setUsedAt(Instant usedAt) { this.usedAt = usedAt; }
+    @Column(name = "attempts", nullable = false)
+private int attempts = 0;
+
+public String getTokenHash() {
+    return tokenHash;
+}
+
+public int getAttempts() {
+    return attempts;
+}
+
+public void incrementAttempts() {
+    this.attempts++;
+}
 }

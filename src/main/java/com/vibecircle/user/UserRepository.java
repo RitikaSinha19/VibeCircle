@@ -17,6 +17,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("select count(u) > 0 from User u where lower(u.username) = lower(:v)")
     boolean usernameTaken(@Param("v") String username);
 
-    @Query("select count(u) > 0 from User u where lower(u.email) = lower(:v)")
-    boolean emailTaken(@Param("v") String email);
+    //@Query("select count(u) > 0 from User u where lower(u.email) = lower(:v)")
+    //boolean emailTaken(@Param("v") String email);
 }
